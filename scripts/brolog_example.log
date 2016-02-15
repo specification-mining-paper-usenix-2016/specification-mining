@@ -1,0 +1,12 @@
+#separator \x09
+#set_separator	,
+#empty_field	(empty)
+#unset_field	-
+#path	bacnettest_devices
+#open	2015-05-20-19-14-34
+#fields	device	modelName	objectName
+#types	string	string	string
+
+17001	Blue ID S10 Controller	Priva XXXXX
+
+#close	2015-05-20-19-49-32

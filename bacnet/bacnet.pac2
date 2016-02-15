@@ -1,0 +1,2468 @@
+module BACnet;
+
+import BinPAC;
+
+#import Bro;
+
+# This module implements a BACnet parser.
+#
+# When used on IP, BACnet is a protocol, which is layered on top
+# of UDP.
+# When used with IP, the outmost layer of a BACnet packet is the
+# BACnet Virtual Link Layer (BVLL), which supports a number of different
+# Virtual Link Control Functions (BVLC).
+#
+# When the BVLL layer is used to sent a higher level message, it wraps
+# a BACnet Network Protocol Data Unit (NPDU). This layer concerns itself
+# with the routing (and so on) of BACnet messages. A NPDU message can either
+# contain different NPDU Message Types, mostly concerning routing. A NPDU
+# can also wrap a BACnet Application Protocol Data Unit (APDU).
+#
+# The APDU layer basically gets all messages that have nothing to do with routing.
+# ASN.1 decoding is needed starting at this layer.
+
+# vim search-replace for enums: s/^\(.*\) (\(\d*\).*/  \1 = \2,/
+
+type ASN1Class = enum {
+  UNIVERSAL = 0,
+  APPLICATION = 1,
+  context-specific = 2,
+  PRIVATE = 3
+};
+
+
+type BACnetLifeSafetyMode = enum {
+  off = 0,
+  bacnet-on = 1, # original: on
+  test = 2,
+  manned = 3,
+  unmanned = 4,
+  armed = 5,
+  disarmed = 6,
+  prearmed = 7,
+  slow = 8,
+  fast = 9,
+  disconnected = 10,
+  enabled = 11,
+  disabled = 12,
+  automatic-release-disabled = 13,
+  default = 14
+## Enumerated values 0-255 are reserved for definition by ASHRAE. Enumerated values
+## 256-65535 may be used by others subject to procedures and constraints described in Clause 23.
+};
+
+type BACnetLifeSafetyOperation = enum {
+  none = 0,
+  silence = 1,
+  silence-audible = 2,
+  silence-visual = 3,
+  reset = 4,
+  reset-alarm = 5,
+  reset-fault = 6,
+  unsilence = 7,
+  unsilence-audible = 8,
+  unsilence-visual = 9
+## Enumerated values 0-63 are reserved for definition by ASHRAE. Enumerated values
+## 64-65535 may be used by others subject to procedures and constraints described in
+## Clause 23.
+};
+
+type BACnetLifeSafetyState = enum {
+  quiet = 0,
+  pre-alarm = 1,
+  alarm = 2,
+  fault = 3,
+  fault-pre-alarm = 4,
+  fault-alarm = 5,
+  not-ready = 6,
+  active = 7,
+  tamper = 8,
+  test-alarm = 9,
+  test-active = 10,
+  test-fault = 11,
+  test-fault-alarm = 12,
+  holdup = 13,
+  duress = 14,
+  tamper-alarm = 15,
+  abnormal = 16,
+  emergency-power = 17,
+  delayed = 18,
+  blocked = 19,
+  local-alarm = 20,
+  general-alarm = 21,
+  supervisory = 22,
+  test-supervisory = 23
+## Enumerated values 0-255 are reserved for definition by ASHRAE. Enumerated values
+## 256-65535 may be used by others subject to procedures and constraints described in Clause 23.
+};
+
+type BACnetAccessEvent = enum {
+  none = 0,
+  granted = 1,
+  muster = 2,
+  passback-detected = 3,
+  duress = 4,
+  trace = 5,
+  lockout-max-attempts = 6,
+  lockout-other = 7,
+  lockout-relinquished = 8,
+  locked-by-higher-priority = 9,
+  out-of-service = 10,
+  out-of-service-relinquished = 11,
+  accompaniment-by = 12,
+  authentication-factor-read = 13,
+  authorization-delayed = 14,
+  verification-required = 15,
+  no-entry-after-grant = 16,
+## Enumerated values 128-511 are used for events which indicate that access has been denied.
+  denied-deny-all = 128,
+  denied-unknown-credential = 129,
+  denied-authentication-unavailable = 130,
+  denied-authentication-factor-timeout = 131,
+  denied-incorrect-authentication-factor = 132,
+  denied-zone-no-access-rights = 133,
+  denied-point-no-access-rights = 134,
+  denied-no-access-rights = 135,
+  denied-out-of-time-range = 136,
+  denied-threat-level = 137,
+  denied-passback = 138,
+  denied-unexpected-location-usage = 139,
+  denied-max-attempts = 140,
+  denied-lower-occupancy-limit = 141,
+  denied-upper-occupancy-limit = 142,
+  denied-authentication-factor-lost = 143,
+  denied-authentication-factor-stolen = 144,
+  denied-authentication-factor-damaged = 145,
+  denied-authentication-factor-destroyed = 146,
+  denied-authentication-factor-disabled = 147,
+  denied-authentication-factor-error = 148,
+  denied-credential-unassigned = 149,
+  denied-credential-not-provisioned = 150,
+  denied-credential-not-yet-active = 151,
+  denied-credential-expired = 152,
+  denied-credential-manual-disable = 153,
+  denied-credential-lockout = 154,
+  denied-credential-max-days = 155,
+  denied-credential-max-uses = 156,
+  denied-credential-inactivity = 157,
+  denied-credential-disabled = 158,
+  denied-no-accompaniment = 159,
+  denied-incorrect-accompaniment = 160,
+  denied-lockout = 161,
+  denied-verification-failed = 162,
+  denied-verification-timeout = 163,
+  denied-other = 164
+## Enumerated values 0-511 are reserved for definition by ASHRAE. Enumerated values
+## 512-65535 may be used by others subject to the procedures and constraints described
+## in Clause 23.
+};
+
+type BACnetAuthenticationFactorType = enum {
+  undefined = 0,
+  error = 1,
+  custom = 2,
+  simple-number16 = 3,
+  simple-number32 = 4,
+  simple-number56 = 5,
+  simple-alpha-numeric = 6,
+  aba-track2 = 7,
+  wiegand26 = 8,
+  wiegand37 = 9,
+  wiegand37-facility = 10,
+  facility16-card32 = 11,
+  facility32-card32 = 12,
+  fasc-n = 13,
+  fasc-n-bcd = 14,
+  fasc-n-large = 15,
+  fasc-n-large-bcd = 16,
+  gsa75 = 17,
+  chuid = 18,
+  chuid-full = 19,
+  guid = 20,
+  cbeff-A = 21,
+  cbeff-B = 22,
+  cbeff-C = 23,
+  user-password = 24
+};
+
+type BACnetReliability = enum {
+  no-fault-detected = 0,
+  no-sensor = 1,
+  over-range = 2,
+  under-range = 3,
+  open-loop = 4,
+  shorted-loop = 5,
+  no-output = 6,
+  unreliable-other = 7,
+  process-error = 8,
+  multi-state-fault = 9,
+  configuration-error = 10,
+## enumeration value 11 is reserved for a future addendum
+  communication-failure = 12,
+  member-fault = 13,
+  monitored-object-fault = 14,
+  tripped = 15
+## Enumerated values 0-63 are reserved for definition by ASHRAE. Enumerated values
+## 64-65535 may be used by others subject to the procedures and constraints described
+## in Clause 23.
+};
+
+export type BVLC_function = enum {
+  # message distribution
+  Original-Unicast-NPDU = 0x0A,
+  Original-Broadcast-NPDU = 0x0B,
+  Distribute-Broadcast-To-Network = 0x09,
+  Forwarded-NPDU = 0x04,
+  # bbmd broadcast distribution & foreign device table management
+  Secure-BVLL = 0x0C,
+  BVLC-Result = 0x00,
+  Write-BDT = 0x01,
+  Read-BDT = 0x02,
+  Read-BDT-ACK= 0x03,
+  Register-FD = 0x05,
+  Read-FDT = 0x06,
+  Read-FDT-ACK = 0x07,
+  Delete-FDT-Entry = 0x08
+};
+
+export type Message = unit {
+  %mimetype = "protocol/bacnet";
+  %mimetype = "port-udp/47808";
+  %mimetype = "port-udp/47809";
+  %mimetype = "port-udp/47810";
+  %mimetype = "port-udp/47811";
+  %mimetype = "port-udp/47812";
+  %mimetype = "port-udp/47813";
+  %mimetype = "port-udp/47814";
+  %mimetype = "port-udp/47815";
+  %mimetype = "port-udp/47816";
+  %mimetype = "port-udp/47817";
+
+  #on %init { print "Message"; }
+
+  # outer protocol exposed to UDP is BVLC
+  tpe: uint8(0x81);
+  func: uint8 &convert=BVLC_function($$);
+  len: uint16;
+
+  switch ( self.func ) {
+   BVLC_function::Original-Unicast-NPDU,
+   BVLC_function::Original-Broadcast-NPDU,
+   BVLC_function::Distribute-Broadcast-To-Network -> npdu: NPDU(self.len - 4);
+   BVLC_function::Forwarded-NPDU -> {
+     originator: addr &ipv4;
+     originator_port: uint16;
+     npdu: NPDU(self.len - 10); # 4 bytes header + IP Address + port
+   }
+   BVLC_function::BVLC-Result,
+   BVLC_function::Write-BDT,
+   BVLC_function::Read-BDT,
+   BVLC_function::Read-BDT-ACK,
+   BVLC_function::Register-FD,
+   BVLC_function::Read-FDT,
+   BVLC_function::Read-FDT-ACK,
+   BVLC_function::Delete-FDT-Entry -> bbmd: BBMD( self.func, self.len - 4 );
+   # BVLC_function::Secure-BVLL Not yet supported, probably not used
+  };
+};
+
+export type BVLC_result = enum {
+  Success = 0x0000,
+  Write-BDT-NAK = 0x0010,
+  Read-BDT-NAK = 0x0020,
+  Register-FD-NAK = 0x0030,
+  Read-FDT-NAK = 0x0040,
+  Delete-FDT-NAK = 0x0050,
+  Distribute-Broadcast-To-Network-NAK = 0x0060
+};
+
+# Broadcast Distribution Table. Due to the fact that BACnet cannot
+# trust the underlying IP network do to broadcasting right, it does
+# it itself.
+#
+# Each BACnet/IP Broadcast Management Device (BBMD) has a Broadcast
+# Distribution table which contains the network addresses to which
+# broadcasts are forwarded.
+type BDT_entry = unit {
+  address: addr &ipv4;
+  address_port: uint16;
+  mask: uint32;
+};
+
+# convert a BDT entry into a Bro tuple
+tuple<addr, uint64, uint64> bro_bdt_entry(entry: BDT_entry) {
+  return ( entry.address, cast<uint64>(entry.address_port), cast<uint64>(entry.mask) );
+}
+
+# Foreign Device Table, also held by a BBMD. Foreign devices are
+# devices that belong to a BACnet network, but reside on a different
+# IP subnet as the other devices forming the subnet.
+type FDT_entry = unit {
+  address: addr &ipv4;
+  address_port: uint16;
+  ttl: uint16;
+  time_remaining: uint16;
+};
+
+# convert a FDT entry into a Bro tuple
+tuple<addr, uint64, uint64, uint64> bro_fdt_entry(entry: FDT_entry) {
+  return ( entry.address, cast<uint64>(entry.address_port), cast<uint64>(entry.ttl), cast<uint64>(entry.time_remaining) );
+}
+
+type BBMD = unit (func: BVLC_function, len: uint16) {
+   # var bdts_brolist: list< tuple<addr, uint64, uint64> >;
+
+  switch ( func ) {
+   BVLC_function::BVLC-Result -> bvlc_result: uint16 &convert=BVLC_result($$);
+   BVLC_function::Read-BDT-ACK,
+   # FIXME: for some reason &length does not seem to work here. Perhaps it has problems with addr &ipv4?
+   BVLC_function::Write-BDT -> bdts: list<BDT_entry> &count=len/10;
+   BVLC_function::Read-FDT,
+   BVLC_function::Read-BDT -> : void;
+   BVLC_function::Register-FD -> ttl: uint16;
+   BVLC_function::Read-FDT-ACK,
+   BVLC_function::Delete-FDT-Entry -> fdts: list<FDT_entry> &count=len/10;
+  };
+};
+
+export type NBACnetPDU = enum {
+  Who-Is-Router-To-Network = 0x00,
+  I-Am-Router-To-Network = 0x01,
+  I-Could-Be-Router-To-Network = 0x02,
+  reject-PDU-Message-To-Network = 0x03,
+  Router-Busy-To-Network = 0x04,
+  Router-Available-To-Network = 0x05,
+  Initialize-Routing-Table = 0x06,
+  Initialize-Routing-Table-Ack = 0x07,
+  Establish-Connection-To-Network = 0x08,
+  Disconnect-Connection-To-Network = 0x09,
+  Challenge-Request = 0x0A,
+  Security-Payload = 0x0B,
+  Security-Response = 0x0C,
+  Request-Key-Update = 0x0D,
+  Update-Key-Set = 0x0E,
+  Update-Distribution-Key = 0x0F,
+  Request-Master-Key = 0x10,
+  Set-Master-Key = 0x11,
+  What-Is-Network-Number = 0x12,
+  Network-Numer-Is = 0x13
+};
+
+export type NPDU_priority = enum {
+  Normal = 0,
+  Urgent = 1,
+  Critical = 2,
+  Life-Safety = 3
+};
+
+# convert data present in all NPDUs into a NPDU_info record
+tuple<NPDU_priority, uint64, bytes, uint64, bytes, uint64, NBACnetPDU> bro_npdu_info(npdu: NPDU) {
+#  return ( npdu.priority, cast<uint64>(npdu.dnet), npdu.dadr, cast<uint64>(npdu.snet), npdu.sadr, cast<uint64>(npdu.hop_count), npdu.message_type );
+# Fixme: since nearly all of these are optionals, we cannot return them
+# at the moment..
+
+  return (npdu.bacnet-priority, 0, b"", 0, b"", 0, npdu.message_type);
+}
+
+type NPDU = unit(len: uint16) {
+
+  #on %init { print "NPDU"; }
+  on %init { self.destination = ""; self.source = ""; }
+
+  var bacnet-priority: NPDU_priority;
+
+  version: uint8; # should be 0x1, but trace also has 10?
+  control : bitfield(8) {
+    bacnet-priority: 0..1;
+    der: 2;
+    source: 3;
+    reserved1: 4;
+    destination: 5;
+    reserved2: 6;
+    nlmessage: 7;
+  } {
+    self.bacnet-priority = NPDU_priority(self.control.bacnet-priority);
+  }
+
+  var destination : string;
+  var source : string;
+
+  dnet: uint16 if ( self.control.destination == 1 ) { self.destination = BinPAC::fmt("%s%s",(self.destination, self.dnet)); }
+  dlen: uint8 if ( self.control.destination == 1 );
+  dadr: bytes &length=self.dlen if ( self.control.destination == 1 ) { self.destination = BinPAC::fmt("%s/%s",(self.destination, self.dadr)); }
+  snet: uint16 if ( self.control.source == 1 ) { self.source = BinPAC::fmt("%s%s",(self.source, self.snet)); }
+  slen: uint8 if ( self.control.source == 1 );
+  sadr: bytes &length=self.slen if ( self.control.source == 1 ) { self.source = BinPAC::fmt("%s/%s",(self.source, self.sadr)); }
+  hop_count: uint8 if ( self.control.destination == 1);
+  message_type: uint8 &convert=NBACnetPDU($$) if ( self.control.nlmessage == 1 );
+
+  npdu_message: NPDU_message( (len - cast<uint16>(self.offset())), self.message_type) if ( self.control.nlmessage == 1 );
+
+  # if nlmessage == 0, APDU follows
+  apdu: APDU( len - cast<uint16>(self.offset()) ) if ( self.control.nlmessage == 0 );
+};
+
+export type NPDU_reject-PDU_reason = enum {
+  Other = 0,
+  No_route = 1,
+  Router_busy = 2,
+  Unknown_message_type = 3,
+  Message_too_long = 4,
+  Security_error = 5,
+  Addressing_error = 6
+};
+
+type NPDU_message = unit(len: uint16, t: NBACnetPDU) {
+  # len only is remaining length
+  switch ( t ) {
+    NBACnetPDU::Who-Is-Router-To-Network,
+    NBACnetPDU::Disconnect-Connection-To-Network -> dnets: list<uint16> &length=len;
+    NBACnetPDU::I-Am-Router-To-Network,
+    NBACnetPDU::Router-Busy-To-Network,
+    NBACnetPDU::Router-Available-To-Network -> dnets: list<uint16> &length=len;
+    NBACnetPDU::I-Could-Be-Router-To-Network -> {
+      dnets: list<uint16> &count=1;
+      performance_index: uint8;
+    }
+    NBACnetPDU::reject-PDU-Message-To-Network -> {
+      reason: uint8 &convert=NPDU_reject-PDU_reason($$);
+      dnets: list<uint16> &count=1;
+    }
+    NBACnetPDU::Establish-Connection-To-Network -> {
+      dnets: list<uint16> &count=1;
+      termination_time: uint8;
+    }
+    NBACnetPDU::What-Is-Network-Number -> : void; # empty packet
+    NBACnetPDU::Network-Numer-Is -> {
+      network_number: uint16;
+      learned: uint8;
+    }
+    NBACnetPDU::Initialize-Routing-Table,
+    NBACnetPDU::Initialize-Routing-Table-Ack -> {
+      number_ports: uint8 if ( len > 0 );
+      routing_entries: list<NPDU_routing_entry> &count=self.number_ports if ( len > 0 );
+    }
+  };
+};
+
+# convert a NPDU routing entry into a Bro tuple
+tuple<uint64, uint64, bytes> bro_npdu_routing_entry(entry: NPDU_routing_entry) {
+  return ( cast<uint64>(entry.dnet), cast<uint64>(entry.portId), entry.portInfo );
+}
+
+type NPDU_routing_entry = unit {
+  dnet: uint16;
+  portId: uint8;
+  portInfo_len: uint8;
+  portInfo: bytes &length=self.portInfo_len;
+};
+
+#################################################################
+#								#
+#			BACNET APDU				#
+#								#
+#################################################################
+
+export type BACnetPDU = enum {
+  
+  confirmed-request-PDU = 	0,
+  unconfirmed-Request-PDU = 	1,
+  simpleAck-PDU = 		2,
+  complexAck-PDU = 		3,
+  segmentAck-PDU = 		4,
+  error-PDU = 			5,
+  reject-PDU = 			6,
+  abort-PDU = 			7
+
+};
+
+########
+# APDU #
+########
+type APDU = unit(len: uint16) {
+  
+  #on %init { print "APDU"; }
+
+  # ok, the first 4 bits contain the actual message type - but we need them later.
+  head: bytes &length = 1;
+  var tpe: BACnetPDU;
+  tpe_raw: uint8 &parse(self.head) {
+    self.tpe_raw = (self.tpe_raw & 0xF0) >> 4;
+    self.tpe = BACnetPDU(self.tpe_raw);
+  }
+
+  switch ( self.tpe ) {
+    BACnetPDU::confirmed-request-PDU 		-> confirmed_request: 	BACnet_Confirmed_Request_PDU(self.head, len);
+    BACnetPDU::unconfirmed-Request-PDU 		-> unconfirmed_request: BACnet_Unconfirmed_Request_PDU(len);
+    BACnetPDU::simpleAck-PDU 			-> simple_ack: 		BACnet_SimpleACK_PDU;
+    BACnetPDU::complexAck-PDU 			-> complex_ack: 	BACnet_ComplexACK_PDU(self.head, len);
+    BACnetPDU::segmentAck-PDU 			-> segment_ack: 	BACnet_SegmentACK_PDU(self.head);
+    BACnetPDU::error-PDU 			-> error: 		BACnet_Error_PDU;
+    BACnetPDU::reject-PDU 			-> reject: 		BACnet_Reject_PDU;
+    BACnetPDU::abort-PDU 			-> abort: 		BACnet_Abort_PDU(self.head);
+  };
+
+};
+
+###################################
+# 0: BACnet_Confirmed_Request_PDU #
+###################################
+global confirmedReq_bytes: map<uint8, bytes>; # store the current bytes
+global confirmedReq_status: map<uint8, uint8>; # store the current invokeId to sequence number mapping
+
+type BACnet_Confirmed_Request_PDU = unit(head: bytes, len: uint16) {
+  var len: uint16 = 4;
+  var segmentation_status: bool = False;
+
+  head1 : bitfield(8) {
+    segmented-response-accepted: 1;
+    more-follows: 2;
+    segmented-message: 3;
+    tpe: 4..7;
+  } &parse(head) {
+    if ( self.head1.segmented-message == 1 ) {
+      self.len = self.len + 2;
+    }
+  }
+  head2: bitfield(8) {
+    max-APDU-length-accepted: 0..3;
+    max-segments-accepted: 4..6;
+  };
+
+  invokeID: uint8;
+  sequence_number: uint8 if ( self.head1.segmented-message == 1 );
+  proposed_window_size: uint8 if ( self.head1.segmented-message == 1 );
+  confirmed_service_choice: uint8 &convert=BACnetConfirmedServiceChoice($$);
+
+  # Segmentation is by invokeID with increasing sequence numbers (first is 0).
+  # If more-follows == 0, we can just re-assemble the packet and parse it in a second
+  # step.
+  content_bytes: bytes &length=( len - self.len ) if ( self.head1.segmented-message == 1 ) {
+
+    # first segment - initialize data structures
+    if ( ( self.head1.segmented-message == 1 ) && ( self.sequence_number == 0)  ) {
+      confirmedReq_status[self.invokeID] = 0;
+      confirmedReq_bytes[self.invokeID] = self.content_bytes;
+      #print "First segment, invokeID", self.invokeID;
+    } else if ( ( self.head1.segmented-message == 1 ) && ( self.sequence_number > 0 ) ) {
+    # segment other than the first.
+    # look if we already know the invokeID and the right sequence number is following. Otherwise - abort or
+    # ignore
+      if ( self.invokeID in confirmedReq_status ) {
+        if ( confirmedReq_status[self.invokeID] >= self.sequence_number ) {
+          # we already have this one, skip...
+          #print "Skipped fragment, invokeID", self.invokeID, "got", self.sequence_number, "last seen", confirmedReq_status[self.invokeID];
+        } else if ( confirmedReq_status[self.invokeID] == ( self.sequence_number - 1 ) ) {
+          # add fragment
+          #print "Added fragment, invokeID", self.invokeID, "got", self.sequence_number, "last seen", confirmedReq_status[self.invokeID];
+          #if ( self.head1.more-follows == 0 ) {
+          #  print "Last fragment";
+          #}
+          confirmedReq_status[self.invokeID] = self.sequence_number;
+          confirmedReq_bytes[self.invokeID] = confirmedReq_bytes[self.invokeID] + self.content_bytes;
+          self.content_bytes = confirmedReq_bytes[self.invokeID];
+          self.segmentation_status = True;
+        } else {
+          # we missed a fragment. Kill it...
+          # Fixme: and output an error or whatever
+          #print "Missing fragment, invokeID", self.invokeID, "got", self.sequence_number, "last seen", confirmedReq_status[self.invokeID];
+          delete confirmedReq_bytes[self.invokeID];
+          delete confirmedReq_status[self.invokeID];
+        }
+      } else {
+        #print "Unknown fragment, invokeID", self.invokeID, "sequence number", self.sequence_number;
+      }
+    }
+  }
+
+  switch ( self.confirmed_service_choice ) {
+    BACnetConfirmedServiceChoice::acknowledgeAlarm -> acknowledgeAlarm: AcknowledgeAlarm_Request(self.invokeID);
+    BACnetConfirmedServiceChoice::confirmedCOVNotification -> confirmedCOVNotification: ConfirmedCOVNotification_Request(self.invokeID);
+    BACnetConfirmedServiceChoice::subscribeCOV -> subscribeCOV: SubscribeCOV_Request(self.invokeID);
+    BACnetConfirmedServiceChoice::subscribeCOVProperty -> subscribeCOVProperty: SubscribeCOVProperty_Request(self.invokeID);
+    BACnetConfirmedServiceChoice::confirmedEventNotification -> confirmedEventNotification: ConfirmedEventNotification_Request(self.invokeID);
+    BACnetConfirmedServiceChoice::readProperty -> readProperty: ReadProperty_Request( self.invokeID );
+    BACnetConfirmedServiceChoice::readPropertyMultiple -> readPropertyMultiple: ReadPropertyMultiple_Request( self.invokeID );
+    BACnetConfirmedServiceChoice::writeProperty -> writeProperty: WriteProperty_Request(  self.invokeID );
+    BACnetConfirmedServiceChoice::writePropertyMultiple -> writePropertyMultiple: WritePropertyMultiple_Request(  self.invokeID );
+    BACnetConfirmedServiceChoice::atomicReadFile -> atomicReadFile: AtomicReadFile_Request( self.invokeID );
+    BACnetConfirmedServiceChoice::atomicWriteFile -> atomicWriteFile: AtomicWriteFile_Request( self.invokeID );
+    BACnetConfirmedServiceChoice::readRange -> readRange: ReadRange_Request( self.invokeID );
+    BACnetConfirmedServiceChoice::createObject -> createObject: CreateObject_Request( self.invokeID );
+    BACnetConfirmedServiceChoice::reinitializeDevice -> reinitializeDevice: ReinitializeDevice_Request( self.invokeID );
+    BACnetConfirmedServiceChoice::confirmedPrivateTransfer -> confirmedPrivateTransfer: ConfirmedPrivateTransfer_Request(self.invokeID);
+    BACnetConfirmedServiceChoice::getEventInformation -> getEventInformation: GetEventInformation_Request(self.invokeID);
+    * -> : void { print "unhandled confirmedrequest", self.confirmed_service_choice; }
+  } if ( self.head1.more-follows == 0 && self.head1.segmented-message == 0 );
+
+  switch ( self.confirmed_service_choice ) {
+    BACnetConfirmedServiceChoice::acknowledgeAlarm -> acknowledgeAlarm: AcknowledgeAlarm_Request(self.invokeID) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::confirmedCOVNotification -> confirmedCOVNotification: ConfirmedCOVNotification_Request(self.invokeID) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::subscribeCOV -> subscribeCOV: SubscribeCOV_Request(self.invokeID) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::subscribeCOVProperty -> subscribeCOVProperty: SubscribeCOVProperty_Request(self.invokeID) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::confirmedEventNotification -> confirmedEventNotification: ConfirmedEventNotification_Request(self.invokeID) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::readProperty -> readProperty: ReadProperty_Request( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::readPropertyMultiple -> readPropertyMultiple: ReadPropertyMultiple_Request( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::writeProperty -> writeProperty: WriteProperty_Request(  self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::writePropertyMultiple -> writePropertyMultiple: WritePropertyMultiple_Request(  self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::atomicReadFile -> atomicReadFile: AtomicReadFile_Request( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::atomicWriteFile -> atomicWriteFile: AtomicWriteFile_Request( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::readRange -> readRange: ReadRange_Request( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::createObject -> createObject: CreateObject_Request( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::reinitializeDevice -> reinitializeDevice: ReinitializeDevice_Request( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::confirmedPrivateTransfer -> confirmedPrivateTransfer: ConfirmedPrivateTransfer_Request(self.invokeID) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::getEventInformation -> getEventInformation: GetEventInformation_Request(self.invokeID) &parse(self.content_bytes);
+    * -> : void { print "unhandled confirmedrequest", self.confirmed_service_choice; }
+  } if ( ( self.head1.more-follows == 0 ) && ( self.head1.segmented-message == 1 ) && ( self.segmentation_status ) ); # only parse message if we are in last chunk and have all data
+
+    : void {
+      if ( ( self.head1.more-follows == 0 ) && ( self.head1.segmented-message == 1 ) && ( self.segmentation_status ) ) {
+        #print "Reassembled:", self.invokeID;
+        delete confirmedReq_bytes[self.invokeID];
+        delete confirmedReq_status[self.invokeID];
+      }
+    }
+};
+
+#####################################
+# 1: BACnet_Unconfirmed_Request_PDU #
+#####################################
+type BACnet_Unconfirmed_Request_PDU = unit(len: uint16) {
+  service_choice: uint8 &convert=BACnetUnconfirmedServiceChoice($$);
+
+  switch ( self.service_choice ) {
+    BACnetUnconfirmedServiceChoice::i-Am -> i_am: I_Am_Request;
+    BACnetUnconfirmedServiceChoice::i-Have -> i_have: I_Have_Request;
+    BACnetUnconfirmedServiceChoice::unconfirmedCOVNotification -> unconfirmedCOVNotification: UnconfirmedCOVNotification_Request;
+    BACnetUnconfirmedServiceChoice::unconfirmedEventNotification -> unconfirmedEventNotification: UnconfirmedEventNotification_Request;
+    BACnetUnconfirmedServiceChoice::unconfirmedPrivateTransfer -> unconfirmedPrivateTransfer: UnconfirmedPrivateTransfer_Request;
+    BACnetUnconfirmedServiceChoice::timeSynchronization -> timeSynchronization: TimeSynchronization_Request;
+    BACnetUnconfirmedServiceChoice::who-Is -> who_is: Who_Is_Request;
+    BACnetUnconfirmedServiceChoice::who-Has -> who_has: Who_Has_Request;
+    * -> : void { print "unhandled unconfirmedconfirmedrequest", self.service_choice; }
+  };
+};
+
+###########################
+# 2: BACnet_SimpleACK_PDU #
+###########################
+type BACnet_SimpleACK_PDU = unit {
+  invokeID: uint8;
+  service_choice: uint8 &convert=BACnetConfirmedServiceChoice($$);
+};
+
+############################
+# 3: BACnet_ComplexACK_PDU #
+############################
+# Fixme: we should perhaps not only id by invokeID, but also by IP...
+global complexAck_bytes: map<uint8, bytes>; # store the current bytes
+global complexAck_status: map<uint8, uint8>; # store the current invokeId to sequence number mapping
+
+type BACnet_ComplexACK_PDU = unit(head_raw: bytes, len: uint16) {
+
+  #on %init { print "ComplexACK"; }
+
+  var len: uint16 = 3;
+  var segmentation_status: bool = False;
+
+  head : bitfield(8) {
+    more-follows: 2;
+    segmented-message: 3;
+    tpe: 4..7;
+  } &parse(head_raw) {
+    if ( self.head.segmented-message == 1 ) {
+      self.len = self.len + 2;
+    }
+  }
+  invokeID: uint8;
+  sequence_number: uint8 if ( self.head.segmented-message == 1 );
+  proposed_window_size: uint8 if ( self.head.segmented-message == 1 );
+  confirmed_service_choice: uint8 &convert=BACnetConfirmedServiceChoice($$);
+
+  # Segmentation is by invokeID with increasing sequence numbers (first is 0).
+  # If more-follows == 0, we can just re-assemble the packet and parse it in a second
+  # step.
+  content_bytes: bytes &length=( len - self.len ) if ( self.head.segmented-message == 1 ) {
+
+    # first segment - initialize data structures
+    if ( ( self.head.segmented-message == 1 ) && ( self.sequence_number == 0)  ) {
+      complexAck_status[self.invokeID] = 0;
+      complexAck_bytes[self.invokeID] = self.content_bytes;
+      #print "First segment, invokeID", self.invokeID;
+    } else if ( ( self.head.segmented-message == 1 ) && ( self.sequence_number > 0 ) ) {
+    # segment other than the first.
+    # look if we already know the invokeID and the right sequence number is following. Otherwise - abort or
+    # ignore
+      if ( self.invokeID in complexAck_status ) {
+        if ( complexAck_status[self.invokeID] >= self.sequence_number ) {
+          # we already have this one, skip...
+          #print "Skipped fragment, invokeID", self.invokeID, "got", self.sequence_number, "last seen", complexAck_status[self.invokeID];
+        } else if ( complexAck_status[self.invokeID] == ( self.sequence_number - 1 ) ) {
+          # add fragment
+          #print "Added fragment, invokeID", self.invokeID, "got", self.sequence_number, "last seen", complexAck_status[self.invokeID];
+          complexAck_status[self.invokeID] = self.sequence_number;
+          complexAck_bytes[self.invokeID] = complexAck_bytes[self.invokeID] + self.content_bytes;
+          self.content_bytes = complexAck_bytes[self.invokeID];
+          self.segmentation_status = True;
+          #if ( self.head.more-follows == 0 ) {
+          #  print "complex-ack-Last fragment. Final length:", |self.content_bytes|;
+          #}
+        } else {
+          # we missed a fragment. Kill it...
+          # Fixme: and output an error or whatever
+          #print "Missing fragment, invokeID", self.invokeID, "got", self.sequence_number, "last seen", complexAck_status[self.invokeID];
+          delete complexAck_bytes[self.invokeID];
+          delete complexAck_status[self.invokeID];
+        }
+      } #else {
+        #print "Unknown fragment, invokeID", self.invokeID, "sequence number", self.sequence_number;
+      #}
+    }
+  }
+
+  switch ( self.confirmed_service_choice ) {
+    BACnetConfirmedServiceChoice::readProperty -> readProperty: ReadProperty_ACK( self.invokeID );
+    BACnetConfirmedServiceChoice::readPropertyMultiple -> readPropertyMultiple: ReadPropertyMultiple_ACK( self.invokeID );
+    BACnetConfirmedServiceChoice::atomicReadFile -> atomicReadFile: AtomicReadFile_ACK( self.invokeID );
+    BACnetConfirmedServiceChoice::atomicWriteFile -> atomicWriteFile: AtomicWriteFile_ACK( self.invokeID );
+    BACnetConfirmedServiceChoice::confirmedPrivateTransfer -> confirmedPrivateTransfer: ConfirmedPrivateTransfer_ACK( self.invokeID );
+    BACnetConfirmedServiceChoice::readRange -> readRange: ReadRange_ACK(self.invokeID);
+    BACnetConfirmedServiceChoice::createObject -> createObject: CreateObject_ACK( self.invokeID );
+    BACnetConfirmedServiceChoice::getEventInformation -> getEventInformation: GetEventInformation_ACK(self.invokeID);
+    * -> : void { print "unhandled complexAck", self.confirmed_service_choice; } # Fixme: missing cases
+  } if ( self.head.more-follows == 0 && self.head.segmented-message == 0 ); # only parse message if we are in single-chunk
+
+  switch ( self.confirmed_service_choice ) {
+    BACnetConfirmedServiceChoice::readProperty -> readProperty: ReadProperty_ACK( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::readPropertyMultiple -> readPropertyMultiple: ReadPropertyMultiple_ACK( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::atomicReadFile -> atomicReadFile: AtomicReadFile_ACK( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::atomicWriteFile -> atomicWriteFile: AtomicWriteFile_ACK( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::confirmedPrivateTransfer -> confirmedPrivateTransfer: ConfirmedPrivateTransfer_ACK( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::readRange -> readRange: ReadRange_ACK(self.invokeID) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::createObject -> createObject: CreateObject_ACK( self.invokeID ) &parse(self.content_bytes);
+    BACnetConfirmedServiceChoice::getEventInformation -> getEventInformation: GetEventInformation_ACK(self.invokeID) &parse(self.content_bytes);
+    * -> : void { print "unhandled complexAck", self.confirmed_service_choice; } # Fixme: missing cases
+  } if ( ( self.head.more-follows == 0 ) && ( self.head.segmented-message == 1 ) && ( self.segmentation_status ) ); # only parse message if we are in last chunk and have all data
+
+    : void {
+      if ( ( self.head.more-follows == 0 ) && ( self.head.segmented-message == 1 ) && ( self.segmentation_status ) ) {
+        #print "Reassembled:", self.invokeID;
+        delete complexAck_bytes[self.invokeID];
+        delete complexAck_status[self.invokeID];
+      }
+    }
+
+};
+
+#############################
+# 4: BACnet_SegmentxACK_PDU #
+#############################
+type BACnet_SegmentACK_PDU = unit(head: bytes) {
+   head : bitfield(8) {
+    srv: 0; # sent by server? 0 = by client
+    nak: 1; # 0 = normal acknowledgment. 1 = negative acknowledgment, segment out of order
+    tpe: 4..7;
+  } &parse(head);
+
+  invokeID: uint8;
+  sequence_number: uint8;
+  actual_window_size: uint8;
+};
+
+#######################
+# 5: BACnet_Error_PDU #
+#######################
+type BACnet_Error_PDU = unit {
+  invokeID: uint8;
+  service: uint8 &convert=BACnetConfirmedServiceChoice($$);
+  error-class_tag: BACnetTag(map<string,string>(), "");						#INFO: Never tested. Used to be BACnetTag
+  error-class: bytes &length=self.error-class_tag.lvt &convert=ErrorClass($$.to_uint(BinPAC::ByteOrder::Network));
+  error-code_tag: BACnetTag(map<string,string>(), "");						#INFO: Never tested. Used to be BACnetTag
+  error-code: bytes &length=self.error-code_tag.lvt &convert=ErrorCode($$.to_uint(BinPAC::ByteOrder::Network));
+};
+
+#######################
+# 6: BACnet_Error_PDU #
+#######################
+type BACnet_Reject_PDU = unit {
+  invokeID: uint8;
+  # FIXME: might be preceeded by tag. Need traffic containing it...
+  reject_reason: uint8 &convert=BACnetAbortReason($$);
+};
+
+#######################
+# 7: BACnet_Abort_PDU #
+#######################
+type BACnet_Abort_PDU = unit(head_raw: bytes) { # page 624
+  head : bitfield(8) {
+    server: 0;
+    tpe: 4..7;
+  } &parse(head_raw);
+  invokeID: uint8;
+  # FIXME: might be preceeded by tag. Need traffic containing it...
+  abort_reason: uint8 &convert=BACnetAbortReason($$); # pg. 652
+};
+
+#################################################################
+#								#
+#			BACNET SERVICES				#
+#								#
+#################################################################
+
+export type BACnetConfirmedServiceChoice = enum {
+  
+  # Alarm and Event Services
+  acknowledgeAlarm = 		0,
+  confirmedCOVNotification = 	1,
+  confirmedEventNotification = 	2,
+  getAlarmSummary = 		3,
+  getEnrollmentSummary = 	4,
+  getEventInformation = 	29,
+  subscribeCOV = 		5,
+  subscribeCOVProperty = 	28,
+  lifeSafetyOperation = 	27,
+  
+  # File Access Services
+  atomicReadFile = 		6,
+  atomicWriteFile = 		7,
+  
+  # Object Access Services
+  addListElement = 		8,
+  removeListElement = 		9,
+  createObject = 		10,
+  deleteObject = 		11,
+  readProperty = 		12,
+  readPropertyMultiple = 	14,
+  readRange = 			26,
+  writeProperty = 		15,
+  writePropertyMultiple = 	16,
+  
+  # Remote Device Management Services
+  deviceCommunicationControl = 	17,
+  confirmedPrivateTransfer = 	18,
+  confirmedTextMessage = 	19,
+  reinitializeDevice = 		20,
+  
+  # Virtual Terminal Services
+  vtOpen = 			21,
+  vtClose = 			22,
+  vtData = 			23
+
+};
+
+###############################
+# 0: AcknowledgeAlarm_Request #
+###############################
+type AcknowledgeAlarm_Request = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned32",
+							     "[1]": "BACnetObjectIdentifier", 
+							     "[2]": "BACnetEventState",
+							     "[3][0]": "Time",
+							     "[3][1]": "Unsigned",
+							     "[3][2]": "BACnetDateTime",
+							     "[4]": "CharacterString",
+							     "[5][0]": "Time",
+							     "[5][1]": "Unsigned",
+							     "[5][2]": "BACnetDateTime" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+
+########################################
+# 1: ConfirmedCOVNotification_Request  #
+########################################
+type ConfirmedCOVNotification_Request = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned32",
+							     "[1]": "BACnetObjectIdentifier", 
+							     "[2]": "BACnetObjectIdentifier",
+							     "[3]": "Unsigned",
+							     "[4][0]": "BACnetPropertyIdentifier",
+							     "[4][1]": "Unsigned",
+							     "[4][3]": "Unsigned");
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+#########################################
+# 2: ConfirmedEventNotification_Request #
+#########################################
+type ConfirmedEventNotification_Request = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned32",
+							     "[1]": "BACnetObjectIdentifier", 
+							     "[2]": "BACnetObjectIdentifier",
+							     "[3][0]": "Time",
+							     "[3][1]": "Unsigned",
+							     "[3][2]": "BACnetDateTime",
+							     "[4]": "Unsigned",
+							     "[5]": "Unsigned8",
+							     "[6]": "BACnetEventType",
+							     "[7]": "CharacterString", 
+							     "[8]": "BACnetNotifyType",
+							     "[9]": "BOOLEAN", 
+							     "[10]": "BACnetEventState",
+							     "[11]": "BACnetEventState",
+							     "[12]": "BACnetNotificationParameters" );	#FIXME: BACnetNotificationParameters not implemented
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+############################
+# 5: SubscribeCOV_Request  #
+############################
+type SubscribeCOV_Request = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned32",
+							     "[1]": "BACnetObjectIdentifier", 
+							     "[2]": "BOOLEAN",
+							     "[3]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+#############################
+# 6: AtomicReadFile_Request #
+#############################
+type AtomicReadFile_Request = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>();
+
+  data: BACnetDataUnitList(self.descriptor);
+  
+};
+
+##############################
+# 7: AtomicWriteFile_Request #
+##############################
+type AtomicWriteFile_Request = unit(invokeID: uint8) {
+  
+  var descriptor: map<string, string> = map<string, string>();
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+############################
+# 10: CreateObject_Request #
+############################
+type CreateObject_Request = unit(invokeID: uint8) {
+  
+  var descriptor: map<string, string> = map<string, string>( "[0][0]": "BACnetObjectType", 
+							     "[0][1]": "BACnetObjectIdentifier", 
+							     "[1][0]": "BACnetPropertyIdentifier",
+							     "[1][1]": "Unsigned",
+							     "[1][3]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+############################
+# 12: ReadProperty_Request #
+############################
+type ReadProperty_Request = unit(invokeID: uint8) {
+  
+  var descriptor: map<string, string> = map<string, string>( "[0]": "BACnetObjectIdentifier", 
+							     "[1]": "BACnetPropertyIdentifier", 
+							     "[2]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+####################################
+# 14: ReadPropertyMultiple_Request #
+####################################
+type ReadPropertyMultiple_Request = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "BACnetObjectIdentifier", 
+							     "[1][0]": "BACnetPropertyIdentifier",
+							     "[1][1]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+#############################
+# 15: WriteProperty_Request #
+#############################
+type WriteProperty_Request = unit(invokeID: uint8) {
+ 
+  var descriptor: map<string, string> = map<string, string>( "[0]": "BACnetObjectIdentifier", 
+							     "[1]": "BACnetPropertyIdentifier", 
+							     "[2]": "Unsigned", 
+							     "[4]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+
+};
+
+#####################################
+# 16: WritePropertyMultiple_Request #
+#####################################
+type WritePropertyMultiple_Request = unit(invokeID: uint8) {
+ 
+  var descriptor: map<string, string> = map<string, string>( "[0]": "BACnetObjectIdentifier", 
+							     "[1][0]": "BACnetPropertyIdentifier", 
+							     "[1][1]": "Unsigned", 
+							     "[1][3]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+########################################
+# 18: ConfirmedPrivateTransfer_Request #
+########################################
+type ConfirmedPrivateTransfer_Request = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned16", 
+							     "[1]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+###################################
+# 20: ReinitializeDevice_Request #
+##################################
+type ReinitializeDevice_Request = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "ENUMERATED", 
+							     "[1]": "CharacterString" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+#########################
+# 26: ReadRange_Request #
+#########################
+type ReadRange_Request = unit(invokeID: uint8) {
+ 
+  var descriptor: map<string, string> = map<string, string>( "[0]": "BACnetObjectIdentifier", 
+							     "[1]": "BACnetPropertyIdentifier", 
+							     "[2]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+#####################################
+# 28: SubscribeCOVProperty_Request  #
+#####################################
+type SubscribeCOVProperty_Request = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned32",
+							     "[1]": "BACnetObjectIdentifier", 
+							     "[2]": "BOOLEAN",
+							     "[3]": "Unsigned",
+							     "[4][0]": "BACnetPropertyIdentifier",
+							     "[4][1]": "Unsigned", 
+							     "[5]": "REAL" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+###################################
+# 29: GetEventInformation_Request #
+###################################
+type GetEventInformation_Request = unit(invokeID: uint8) {
+  
+  var descriptor: map<string, string> = map<string, string>( "[0]": "BACnetObjectIdentifier" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+####################################################
+
+export type BACnetUnconfirmedServiceChoice = enum {
+  
+  i-Am =				0,
+  i-Have = 				1,
+  unconfirmedCOVNotification = 		2,
+  unconfirmedEventNotification = 	3,
+  unconfirmedPrivateTransfer = 		4,
+  unconfirmedTextMessage = 		5,
+  timeSynchronization = 		6,
+  who-Has = 				7,
+  who-Is = 				8,
+  utcTimeSynchronization = 		9,
+  writeGroup = 				10
+
+};
+
+#####################
+# 0: I_Am_Request #
+#####################
+type I_Am_Request = unit {
+  
+  var descriptor: map<string, string> = map<string, string>( );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+#####################
+# 1: I_Have_Request #
+#####################
+type I_Have_Request = unit {
+  
+  var descriptor: map<string, string> = map<string, string>( );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+#########################################
+# 2: UnconfirmedCOVNotification_Request #
+#########################################
+type UnconfirmedCOVNotification_Request = unit {							# INFO: Never tested
+  
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned32", 
+							     "[1]": "BACnetObjectIdentifier", 
+							     "[2]": "BACnetObjectIdentifier",
+							     "[3]": "Unsigned",
+							     "[4][0]": "BACnetPropertyIdentifier",
+							     "[4][1]": "Unsigned",
+							     "[4][3]": "Unsigned");		
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+###########################################
+# 2: UnconfirmedEventNotification_Request #
+###########################################
+type UnconfirmedEventNotification_Request = unit {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned32",
+							     "[1]": "BACnetObjectIdentifier", 
+							     "[2]": "BACnetObjectIdentifier",
+							     "[3][0]": "Time",
+							     "[3][1]": "Unsigned",
+							     "[3][2]": "BACnetDateTime",
+							     "[4]": "Unsigned",
+							     "[5]": "Unsigned8",
+							     "[6]": "BACnetEventType",
+							     "[7]": "CharacterString", 
+							     "[8]": "BACnetNotifyType",
+							     "[9]": "BOOLEAN", 
+							     "[10]": "BACnetEventState",
+							     "[11]": "BACnetEventState",
+							     "[12]": "BACnetNotificationParameters" );	#FIXME: BACnetNotificationParameters not implemented
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+#########################################
+# 4: UnconfirmedPrivateTransfer_Request #
+#########################################
+type UnconfirmedPrivateTransfer_Request = unit {						#INFO: Never tested
+  
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned16", 
+							     "[1]": "Unsigned" );		
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+##################################
+# 6: TimeSynchronization_Request #
+##################################
+type TimeSynchronization_Request = unit {							#INFO: Never tested
+  
+  var descriptor: map<string, string> = map<string, string>( );		
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+######################
+# 7: Who_Has_Request #
+######################
+type Who_Has_Request = unit {
+  
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned", 
+							     "[1]": "Unsigned", 
+							     "[2]": "BACnetObjectIdentifier", 
+							     "[3]": "CharacterString" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+#####################
+# 8: Who_Is_Request #
+#####################
+type Who_Is_Request = unit {
+  
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned", 
+							     "[1]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+####################################################
+
+#########################
+# 6: AtomicReadFile_ACK #
+#########################
+type AtomicReadFile_ACK = unit(invokeID: uint8) {
+ 
+  var descriptor: map<string, string> = map<string, string>( );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+##########################
+# 7: AtomicWriteFile_ACK #
+##########################
+type AtomicWriteFile_ACK = unit(invokeID: uint8) {
+  
+  var descriptor: map<string, string> = map<string, string>( "[0]": "INTEGER", 
+							     "[1]": "INTEGER" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+########################
+# 10: CreateObject_ACK #
+########################
+type CreateObject_ACK = unit(invokeID: uint8) {
+  
+  var descriptor: map<string, string> = map<string, string>(  );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+########################
+# 12: ReadProperty_ACK #
+########################
+type ReadProperty_ACK = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "BACnetObjectIdentifier", 
+							     "[1]": "BACnetPropertyIdentifier",
+							     "[2]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+################################
+# 14: ReadPropertyMultiple_ACK #
+################################
+type ReadPropertyMultiple_ACK = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "BACnetObjectIdentifier", 
+							     "[1][2]": "BACnetPropertyIdentifier",
+							     "[1][3]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+####################################
+# 18: ConfirmedPrivateTransfer_ACK #
+####################################
+type ConfirmedPrivateTransfer_ACK = unit(invokeID: uint8) {
+
+  var descriptor: map<string, string> = map<string, string>( "[0]": "Unsigned16", 
+							     "[1]": "Unsigned" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+#####################
+# 26: ReadRange_ACK #
+#####################
+type ReadRange_ACK = unit(invokeID: uint8) {
+  
+  var descriptor: map<string, string> = map<string, string>( "[0]": "BACnetObjectIdentifier", 
+							     "[1]": "BACnetPropertyIdentifier",
+							     "[2]": "Unsigned", 
+							     "[3]": "BACnetResultFlags",
+							     "[4]": "Unsigned",
+							     "[6]": "Unsigned32");
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+###############################
+# 26: GetEventInformation_ACK #
+###############################
+type GetEventInformation_ACK = unit(invokeID: uint8) {
+  
+  var descriptor: map<string, string> = map<string, string>( "[0][0]": "BACnetObjectIdentifier", 
+							     "[0][1]": "BACnetEventState",
+							     "[0][2]": "BACnetEventTransitionBits", 
+							     "[0][3][0]": "Time",
+							     "[0][3][1]": "Unsigned",
+							     "[0][3][2]": "BACnetDateTime",
+							     "[0][4]": "BACnetNotifyType",
+							     "[0][5]": "BACnetEventTransitionBits",
+							     "[0][6]": "Unsigned",
+							     "[1]": "BOOLEAN" );
+
+  data: BACnetDataUnitList(self.descriptor);
+
+};
+
+#################################################################
+#								#
+#			BACNET APDU CORE			#
+#								#
+#################################################################
+
+string updateTagPath(tagIndex: uint8, tagPath: string)	# This function updates the tagPath while parsing message tag trees
+{
+  return BinPAC::fmt("%s[%d]", (tagPath, tagIndex));
+}
+
+#####################
+#   BACnetDataUnit  #
+#####################
+type BACnetDataUnit = unit(descriptor: map<string, string>, tagPath: string) {
+
+  tag: BACnetTag(descriptor, tagPath);
+  content: BACnetContent(descriptor, self.tag, tagPath) if(self.tag.data.lvt != 0x7 && self.tag.data.lvt != 0x6);
+
+};
+
+#########################
+#   BACnetDataUnitList  #
+#########################
+type BACnetDataUnitList = unit(descriptor: map<string, string>) {
+  
+  dataUnits: list<BACnetDataUnit(descriptor, "")>;
+
+};
+
+##################################
+#   BACnetDataUnitListUntilTag   #
+##################################
+type BACnetDataUnitListUntilTag = unit(descriptor: map<string, string>, open_tag: BACnetTag, tagPath: string) {
+
+  dataUnits: list<BACnetDataUnit(descriptor, tagPath)> &until( ( $$.tag.data.lvt == 0x7 ) &&
+  						    	       ( $$.tag.number == open_tag.number) );
+
+};
+
+#####################
+#     BACnetTag     #
+#####################
+type BACnetTag = unit(descriptor: map<string, string>, tagPath: string) {
+
+  var number: uint8;				# "Tag Number"
+  var tpe: BACnetType;				# "Tag Type" is present only if "Tag Class" is equal to "Application"
+  var class: ASN1Class;				# "Tag Class"
+  var lvt: uint32;				# "Tag Length/Value/Type"
+
+  data : bitfield(8) {
+
+     lvt: 0..2;
+     class: 3;
+     num: 4..7;
+  
+  } &bitorder=BinPAC::BitOrder::LSB0 { 
+
+    self.class = ASN1Class(self.data.class + 1);
+
+    if ( self.class == ASN1Class::APPLICATION ) {
+      self.tpe = BACnetType(self.data.num);
+    }
+    
+    self.number = self.data.num;
+    self.lvt = self.data.lvt;
+  
+  }
+
+  extra_number: uint8 if ( self.class != ASN1Class::APPLICATION && self.data.num == 0xF ) { self.number = self.extra_number; }
+
+  extra_length: uint8 if (self.data.lvt == 0x5) { self.lvt = self.extra_length; }
+  extra_length2: uint16 if (self.data.lvt == 0x5 && self.extra_length == 254) { self.lvt = self.extra_length2; }
+  extra_length4: uint32 if (self.data.lvt == 0x5 && self.extra_length == 255) { self.lvt = self.extra_length4; }
+
+  inside: BACnetDataUnitListUntilTag(descriptor, self, updateTagPath(self.number, tagPath)) if ( self.data.lvt == 0x6 );
+
+};
+
+#####################
+#   BACnetContent   #
+#####################
+type BACnetContent = unit(descriptor: map<string, string>, current_tag: BACnetTag, tagPath: string) {
+
+  on %init { 
+
+    if ( current_tag.class == ASN1Class::APPLICATION ) {	# If the tag is an application tag than it parses the content just using the "number" field
+      
+      self.parse = updateTagPath(current_tag.number, "");
+      
+      self.fix = "";
+      self.tagLabel = BinPAC::fmt("%s%s", (current_tag.tpe, self.fix));					
+    
+    } else {							# If the tag is a context tag that it parses the content using the "descriptor"
+      
+      if(updateTagPath(current_tag.number, tagPath) in descriptor){
+        self.parse = descriptor.get(updateTagPath(current_tag.number, tagPath)); 
+      } else {
+        self.parse = "UNKNWON";
+      }
+
+      self.tagLabel = updateTagPath(current_tag.number, "");
+
+   } 
+
+  }
+
+  var fix: string;	# This variable fixes a bug in the "BinPAC::fmt" function
+  var tagLabel: string;	# This variable stores the tagLabel used in "bacnet_apdu" to identify the resources 
+  var parse: string;	# This variable stores the actual type used to parse the content
+
+  switch ( self.parse ) {
+    
+    "[0]",	"NULL" 							-> null_: 	ParseNull(tagPath, self.tagLabel);
+    "[1]"								-> boolapp: 	ParseBooleanApp(tagPath, self.tagLabel, current_tag.lvt);
+		"BOOLEAN"						-> boolcon: 	ParseBooleanCon(tagPath, self.tagLabel, current_tag.lvt);
+    "[2]",	"Unsigned", "Unsigned8", "Unsigned16", "Unsigned32" 	-> unsigned: 	ParseUnsigned(tagPath, self.tagLabel, current_tag.lvt);
+    "[3]",	"INTEGER" 						-> integer: 	ParseInteger(tagPath, self.tagLabel, current_tag.lvt);
+    "[4]",	"REAL"							-> real: 	ParseReal(tagPath, self.tagLabel);
+    "[5]",	"Double" 						-> double_: 	ParseDouble(tagPath, self.tagLabel);
+    "[6]",	"OCTET STRING" 						-> octets: 	ParseOctets(tagPath, self.tagLabel, current_tag.lvt);
+    "[7]",	"CharacterString" 					-> characters: 	ParseBACnetCharacterString(tagPath, self.tagLabel, current_tag.lvt);
+    "[8]",	"BIT STRING" 						-> bits: 	ParseBACnetBitString(tagPath, self.tagLabel, current_tag.lvt);
+    "[9]",	"ENUMERATED"						-> enumerated: 	ParseEnumerated(tagPath, self.tagLabel, current_tag.lvt);
+    "[10]",	"Date"  						-> date: 	ParseDate(tagPath, self.tagLabel);
+    "[11]",	"Time" 							-> time_: 	ParseTime(tagPath, self.tagLabel);
+    "[12]",	"BACnetObjectIdentifier" 				-> oid: 	ParseBACnetObjectIdentifier(tagPath, self.tagLabel);
+		
+		"BACnetPropertyIdentifier"				-> pid: 	ParseBACnetPropertyIdentifier(tagPath, self.tagLabel, current_tag.lvt);
+
+		"BACnetEventType"					-> eventtype:	ParseEnumerated(tagPath, self.tagLabel, current_tag.lvt);
+		"BACnetEventState"					-> eventstate:	ParseEnumerated(tagPath, self.tagLabel, current_tag.lvt);
+		"BACnetNotifyType"					-> notifytype:	ParseEnumerated(tagPath, self.tagLabel, current_tag.lvt);
+		"BACnetResultFlags"					-> resultflags:	ParseBACnetBitString(tagPath, self.tagLabel, current_tag.lvt);
+		"BACnetSegmentation"					-> seg:		ParseEnumerated(tagPath, self.tagLabel, current_tag.lvt);
+		"BACnetEventTransitionBits"				-> tranbits:	ParseBACnetBitString(tagPath, self.tagLabel, current_tag.lvt);
+
+    *									-> unknown:	ParseUnknown(tagPath, self.tagLabel, current_tag.lvt);
+
+  };
+
+};
+
+####################################################
+
+#############################
+#  BACnet Primitive Event   #
+#           NULL            #
+#############################
+type ParseNull = unit(path: string, label: string) {			# INFO: Never tested
+
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#       Boolean (App)       #
+#############################
+type ParseBooleanApp = unit(path: string, label: string, val: uint32) {
+
+  on %init { self.tagPath = path; self.tagLabel = label; self.value = val == 0 ? False : True; }
+
+  var tagPath: string;
+  var tagLabel: string;
+  var value: bool;
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#       Boolean (Con)       #
+#############################
+type ParseBooleanCon = unit(path: string, label: string, val: uint32) {
+
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+  var value: bool;
+
+  data: uint8 { self.value = self.data == 0 ? False : True; } 
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#         Unsigned          #
+#############################
+type ParseUnsigned = unit(path: string, label: string, length: uint32) {
+
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+  value: bytes &length=length &convert=$$.to_uint(BinPAC::ByteOrder::Network);
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#         Integer           #
+#############################
+type ParseInteger = unit(path: string, label: string, length: uint32) {
+
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+  value: bytes &length=length &convert=$$.to_int(BinPAC::ByteOrder::Network);	# FIXME: This needs to be two's complement	
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#           Real            #
+#############################
+type ParseReal = unit(path: string, label: string) {
+
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+  value: double &precision=BinPAC::Precision::Single;
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#          Double           #
+#############################
+type ParseDouble = unit(path: string, label: string) {
+
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+  value: double &precision=BinPAC::Precision::Double;
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#          Octets           #
+#############################
+type ParseOctets = unit(path: string, label: string, length: uint32) {
+
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+  value: bytes &length=length;
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#     Character String      #
+#############################
+type BACnetCharacterStringType = enum {
+  
+  UTF8 = 	0,
+  DBCS = 	1,
+  JISX0208 = 	2,
+  UCS4 = 	3,
+  UCS2 = 	4,
+  ISO00591 = 	5
+
+};
+
+type ParseBACnetCharacterString = unit(path: string, label: string, length: uint32) {
+  
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+
+  tpe: uint8 &convert=BACnetCharacterStringType($$);
+
+  switch ( self.tpe ) {
+    # LE and BE could be switched, not quite sure...
+    BACnetCharacterStringType::UTF8 -> value: bytes &length=(length - 1) &convert=$$.decode(BinPAC::Charset::ASCII); # &convert=$$.decode(BinPAC::Charset::UTF8); # FIXME	
+    BACnetCharacterStringType::UCS2 -> value: bytes &length=(length - 1) &convert=$$.decode(BinPAC::Charset::UTF16BE);
+    BACnetCharacterStringType::UCS4 -> value: bytes &length=(length - 1) &convert=$$.decode(BinPAC::Charset::UTF32BE);
+    * -> value: bytes &length=(length - 1) &convert=$$.decode(BinPAC::Charset::ASCII); 		# FIXME: DBCS, JOSX0208, ISO885901
+  };
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#         Bit String        #
+#############################
+type Bits = unit(values: vector<bool>) {
+
+  bits : bitfield(8) {
+
+     zero: 	0;
+     one: 	1;
+     two: 	2;
+     three: 	3;
+     four: 	4;
+     five:	5;
+     six:	6;
+     seven:	7;
+  
+  } &bitorder=BinPAC::BitOrder::MSB0;
+
+  on %done {
+
+    if(self.bits.zero == 0x1){ values.push_back(True); } else { values.push_back(False); }
+    if(self.bits.one == 0x1){ values.push_back(True); } else { values.push_back(False); }
+    if(self.bits.two == 0x1){ values.push_back(True); } else { values.push_back(False); }
+    if(self.bits.three == 0x1){ values.push_back(True); } else { values.push_back(False); }
+    if(self.bits.four == 0x1){ values.push_back(True); } else { values.push_back(False); }
+    if(self.bits.five == 0x1){ values.push_back(True); } else { values.push_back(False); }
+    if(self.bits.six == 0x1){ values.push_back(True); } else { values.push_back(False); }
+    if(self.bits.seven == 0x1){ values.push_back(True); } else { values.push_back(False); }
+
+  }
+
+};
+
+type ParseBACnetBitString = unit(path: string, label: string, length: uint32) {
+   
+  # We have cases where the length is 0. I do not think this is legal, but...
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+  var values: vector<bool>;
+ 
+  unused_bits: uint8 if ( length > 0 );
+  value_bits : list<Bits(self.values)> &count=(length - 1) if ( length > 1 ) ;
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#         Enumerated        #
+#############################
+type ParseEnumerated = unit(path: string, label: string, length: uint32) {
+
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+  value: bytes &length=length &convert=$$.to_uint(BinPAC::ByteOrder::Network);
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#           Date            #
+#############################
+type ParseDate = unit(path: string, label: string) {
+  
+  # a value of 0xFF in any field means wildcard.
+
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+
+  var year: uint16;
+  year_raw: uint8 {
+    
+    if ( self.year_raw != 0xFF ) {
+      
+      self.year = self.year_raw;
+      self.year = self.year + 1900;
+    
+    } else {
+      self.year = 0; # unspecified
+    }
+
+  }
+
+  month: uint8;
+  day: uint8;
+  weekday: uint8; # monday = 1
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#           Time            #
+#############################
+type ParseTime = unit(path: string, label: string) {
+ 
+  # a value of 0xFF in any field means wildcard.
+  
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+
+  hour: uint8;
+  minute: uint8;
+  second: uint8;
+  centisecond: uint8;
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+#  BACnetObjectIdentifier   #
+#############################
+type ParseBACnetObjectIdentifier = unit(path: string, label: string) {		# FIXME: need to get the type mapping from somewhere, probably the standard...
+  
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var fix: string;
+
+  var tagPath: string;
+  var tagLabel: string;
+  var tpe: string;
+
+  data: bitfield(32) {
+    
+    instanceNumber: 0..21;
+    tpe: 22..31;
+  
+  } {
+    
+    self.fix = "";
+
+    if(self.data.tpe < 128){
+      self.tpe = BinPAC::fmt("%s%s", (self.fix, BACnetObjectType(self.data.tpe)));
+    } else {
+      #self.tpe = BACnetObjectType(1023);
+      self.tpe = BinPAC::fmt("%s_proprietary_ (%s)", (self.fix, self.data.tpe));
+    }
+
+  }
+
+};
+
+#############################
+#  BACnet Primitive Event   #
+# BACnetPropertyIdentifier  #
+#############################
+type ParseBACnetPropertyIdentifier = unit(path: string, label: string, length: uint32) {
+
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var fix: string;
+
+  var tagPath: string;
+  var tagLabel: string;
+
+  var tpe: string;
+
+  value: bytes &length=length { 
+
+    self.fix = "";
+
+    if(self.value.to_uint(BinPAC::ByteOrder::Network) < 512){
+      self.tpe = BinPAC::fmt("%s%s", (self.fix, BACnetPropertyIdentifier(self.value.to_uint(BinPAC::ByteOrder::Network))));
+    } else {
+      #self.tpe = BACnetPropertyIdentifier(4194303);
+      self.tpe = BinPAC::fmt("%s_proprietary_ (%s)", (self.fix, self.value.to_uint(BinPAC::ByteOrder::Network)));
+    }
+
+  }
+  
+};
+
+#############################
+#  BACnet Primitive Event   #
+#         Unknown           #
+#############################
+type ParseUnknown = unit(path: string, label: string, length: uint32) {
+
+  on %init { self.tagPath = path; self.tagLabel = label; }
+
+  var tagPath: string;
+  var tagLabel: string;
+  value: bytes &length=length;
+
+};
+
+#################################################################
+#								#
+#	             BACNET ENUMERATED TYPES			#
+#								#
+#################################################################
+
+export type BACnetType = enum {
+  
+  NULL = 			0,
+  BOOLEAN = 			1,
+  Unsigned = 			2,
+  INTEGER = 			3,
+  REAL = 			4,
+  Double = 			5,
+  OCTET_STRING = 		6,
+  CharacterString = 		7,
+  BIT_STRING = 			8,
+  ENUMERATED = 			9,
+  Date = 			10,
+  Time = 			11,
+  BACnetObjectIdentifier = 	12
+
+};
+
+export type BACnetObjectType = enum {
+  
+  alert-enrollment = 		52,
+  access-credential = 		32,
+  access-door = 		30,
+  access-point = 		33,
+  access-rights = 		34,
+  access-user = 		35,
+  access-zone = 		36,
+  accumulator = 		23,
+  analog-input = 		0,
+  analog-output = 		1,
+  analog-value = 		2,
+  averaging = 			18,
+  binary-input = 		3,
+  binary-output = 		4,
+  binary-value = 		5,
+  bitstring-value = 		39,
+  calendar = 			6,
+  channel = 			53,
+  characterstring-value = 	40,
+  command = 			7,
+  credential-data-input = 	37,
+  date-pattern-value = 		41,
+  date-value = 			42,
+  datetime-pattern-value = 	43,
+  datetime-value = 		44,
+  device = 			8,
+  event-enrollment = 		9,
+  event-log = 			25,
+  file_ = 			10,  # INFO: Original name was "file"
+  global-group = 		26,
+  group = 			11,
+  integer-value = 		45,
+  large-analog-value = 		46,
+  life-safety-point = 		21,
+  life-safety-zone = 		22,
+  lighting-output = 		54,
+  load-control = 		28,
+  loop = 			12,
+  multi-state-input = 		13,
+  multi-state-output = 		14,
+  multi-state-value = 		19,
+  network-security = 		38,
+  notification-class = 		15,
+  notification-forwarder = 	51,
+  octetstring-value = 		47,
+  positive-integer-value = 	48,
+  program = 			16,
+  pulse-converter = 		24,
+  schedule = 			17,
+  structured-view = 		29,
+  time-pattern-value = 		49,
+  time-value = 			50,
+  trend-log = 			20,
+  trend-log-multiple = 		27,
+  
+  _proprietary_ = 		1023
+
+};
+
+export type BACnetPropertyIdentifier = enum {
+  
+  absentee-limit = 			244,
+  accepted-modes = 			175,
+  access-alarm-events = 		245,
+  access-doors = 			246,
+  access-event = 			247,
+  access-event-authentication-factor = 	248,
+  access-event-credential = 		249,
+  access-event-tag = 			322,
+  access-event-time = 			250,
+  access-transaction-events = 		251,
+  accompaniment = 			252,
+  accompaniment-time = 			253,
+  ack-required = 			1,
+  acked-transitions = 			0,
+  action = 				2,
+  action-text = 			3,
+  activation-time = 			254,
+  active-authentication-policy = 	255,
+  active-cov-subscriptions = 		152,
+  active-text = 			4,
+  active-vt-sessions = 			5,
+  actual-shed-level = 			212,
+  adjust-value = 			176,
+  alarm-value = 			6,
+  alarm-values = 			7,
+  align-intervals = 			193,
+  all = 				8,
+  all-writes-successful = 		9,
+  allow-group-delay-inhibit = 		365,
+  apdu-segment-timeout = 		10,
+  apdu-timeout = 			11,
+  application-software-version = 	12,
+  archive = 				13,
+  assigned-access-rights = 		256,
+  attempted-samples = 			124,
+  authentication-factors = 		257,
+  authentication-policy-list = 		258,
+  authentication-policy-names = 	259,
+  authentication-status = 		260,
+  authorization-exemptions = 		364,
+  authorization-mode = 			261,
+  auto-slave-discovery = 		169,
+  average-value = 			125,
+  backup-and-restore-state = 		338,
+  backup-failure-timeout = 		153,
+  backup-preparation-time = 		339,
+  base-device-security-policy = 	327,
+  belongs-to = 				262,
+  bias = 				14,
+  bit-mask = 				342,
+  bit-text = 				343,
+  blink-warn-enable = 			373,
+  buffer-size = 			126,
+  change-of-state-count = 		15,
+  change-of-state-time = 		16,
+  channel-number = 			366,
+  client-cov-increment = 		127,
+  configuration-files = 		154,
+  control-groups = 			367,
+  controlled-variable-reference = 	19,
+  controlled-variable-units = 		20,
+  controlled-variable-value = 		21,
+  count = 				177,
+  count-before-change = 		178,
+  count-change-time = 			179,
+  cov-increment = 			22,
+  cov-period = 				180,
+  cov-resubscription-interval = 	128,
+  covu-period = 			349,
+  covu-recipients = 			350,
+  credential-disable = 			263,
+  credential-status = 			264,
+  credentials = 			265,
+  credentials-in-zone = 		266,
+  database-revision = 			155,
+  date-list = 				23,
+  daylight-savings-status = 		24,
+  days-remaining = 			267,
+  deadband = 				25,
+  default-fade-time = 			374,
+  default-ramp-rate = 			375,
+  default-step-increment = 		376,
+  derivative-constant = 		26,
+  derivative-constant-units = 		27,
+  description = 			28,
+  description-of-halt = 		29,
+  device-address-binding = 		30,
+  device-type = 			31,
+  direct-reading = 			156,
+  distribution-key-revision = 		328,
+  do-not-hide = 			329,
+  door-alarm-state = 			226,
+  door-extended-pulse-time = 		227,
+  door-members = 			228,
+  door-open-too-long-time = 		229,
+  door-pulse-time = 			230,
+  door-status = 			231,
+  door-unlock-delay-time = 		232,
+  duty-window = 			213,
+  effective-period = 			32,
+  egress-time = 			377,
+  egress-active = 			386,
+  elapsed-active-time = 		33,
+  entry-points = 			268,
+  enable = 				133,
+  error-limit = 			34,
+  event-algorithm-inhibit = 		354,
+  event-algorithm-inhibit-ref = 	355,
+  event-detection-enable = 		353,
+  event-enable = 			35,
+  event-message-texts = 		351,
+  event-message-texts-config = 		352,
+  event-state = 			36,
+  event-time-stamps = 			130,
+  event-type = 				37,
+  event-parameters = 			83,
+  exception-schedule = 			38,
+  execution-delay = 			368,
+  exit-points = 			269,
+  expected-shed-level = 		214,
+  expiry-time = 			270,
+  extended-time-enable = 		271,
+  failed-attempt-events = 		272,
+  failed-attempts = 			273,
+  failed-attempts-time = 		274,
+  fault-parameters =			358,
+  fault-type = 				359,
+  fault-values = 			39,
+  feedback-value = 			40,
+  file-access-method = 			41,
+  file-size = 				42,
+  file-type = 				43,
+  firmware-revision = 			44,
+  full-duty-baseline = 			215,
+  global-identifier = 			323,
+  group-members = 			345,
+  group-member-names = 			346,
+  high-limit = 				45,
+  inactive-text = 			46,
+  in-process = 				47,
+  in-progress = 			378,
+  input-reference = 			181,
+  instance-of = 			48,
+  instantaneous-power = 		379,
+  integral-constant = 			49,
+  integral-constant-units = 		50,
+  interval-offset = 			195,
+  is-utc = 				344,
+  key-sets = 				330,
+  last-access-event = 			275,
+  last-access-point = 			276,
+  last-credential-added = 		277,
+  last-credential-added-time = 		278,
+  last-credential-removed = 		279,
+  last-credential-removed-time = 	280,
+  last-key-server = 			331,
+  last-notify-record = 			173,
+  last-priority = 			369,
+  last-restart-reason = 		196,
+  last-restore-time = 			157,
+  last-use-time = 			281,
+  life-safety-alarm-values = 		166,
+  lighting-command = 			380,
+  lighting-command-default-priority = 	381,
+  limit-enable = 			52,
+  limit-monitoring-interval = 		182,
+  list-of-group-members = 		53,
+  list-of-object-property-references = 	54,
+  local-date = 				56,
+  local-forwarding-only = 		360,
+  local-time = 				57,
+  location = 				58,
+  lock-status = 			233,
+  lockout = 				282,
+  lockout-relinquish-time = 		283,
+  log-buffer = 				131,
+  log-device-object-property = 		132,
+  log-interval = 			134,
+  logging-object = 			183,
+  logging-record = 			184,
+  logging-type = 			197,
+  low-limit = 				59,
+  maintenance-required = 		158,
+  manipulated-variable-reference = 	60,
+  manual-slave-address-binding = 	170,
+  masked-alarm-values = 		234,
+  maximum-output = 			61,
+  maximum-value = 			135,
+  maximum-value-timestamp = 		149,
+  max-actual-value = 			382,
+  max-apdu-length-accepted = 		62,
+  max-failed-attempts = 		285,
+  max-info-frames = 			63,
+  max-master = 				64,
+  max-pres-value = 			65,
+  max-segments-accepted = 		167,
+  member-of = 				159,
+  member-status-flags = 		347,
+  members = 				286,
+  minimum-off-time = 			66,
+  minimum-on-time = 			67,
+  minimum-output = 			68,
+  minimum-value = 			136,
+  minimum-value-timestamp = 		150,
+  min-actual-value = 			383,
+  min-pres-value = 			69,
+  mode = 				160,
+  model-name = 				70,
+  modification-date = 			71,
+  muster-point = 			287,
+  negative-access-rules = 		288,
+  network-access-security-policies = 	332,
+  node-subtype = 			207,
+  node-type = 				208,
+  notification-class = 			17,
+  notification-threshold = 		137,
+  notify-type = 			72,
+  number-of-apdu-retries = 		73,
+  number-of-authentication-policies = 	289,
+  number-of-states = 			74,
+  object-identifier = 			75,
+  object-list = 			76,
+  object-name = 			77,
+  object-property-reference = 		78,
+  object-type = 			79,
+  occupancy-count = 			290,
+  occupancy-count-adjust = 		291,
+  occupancy-count-enable = 		292,
+  occupancy-lower-limit = 		294,
+  occupancy-lower-limit-enforced = 	295,
+  occupancy-state = 			296,
+  occupancy-upper-limit = 		297,
+  occupancy-upper-limit-enforced = 	298,
+  operation-expected = 			161,
+  optional_ = 				80,
+  out-of-service = 			81,
+  output-units = 			82,
+  packet-reorder-time = 		333,
+  passback-mode = 			300,
+  passback-timeout = 			301,
+  polarity = 				84,
+  port-filter = 			363,
+  positive-access-rules = 		302,
+  power = 				384,
+  prescale = 				185,
+  present-value = 			85,
+  bacnet-priority = 			86,
+  priority-array = 			87,
+  priority-for-writing = 		88,
+  process-identifier = 			89,
+  process-identifier-filter = 		361,
+  profile-name = 			168,
+  program-change = 			90,
+  program-location = 			91,
+  program-state = 			92,
+  property-list = 			371,
+  proportional-constant = 		93,
+  proportional-constant-units = 	94,
+  protocol-object-types-supported = 	96,
+  protocol-revision = 			139,
+  protocol-services-supported = 	97,
+  protocol-version = 			98,
+  pulse-rate = 				186,
+  read-only = 				99,
+  reason-for-disable = 			303,
+  reason-for-halt = 			100,
+  recipient-list = 			102,
+  records-since-notification = 		140,
+  record-count = 			141,
+  reliability = 			103,
+  reliability-evaluation-inhibit = 	357,
+  relinquish-default = 			104,
+  requested-shed-level = 		218,
+  requested-update-interval = 		348,
+  required = 				105,
+  resolution = 				106,
+  restart-notification-recipients = 	202,
+  restore-completion-time = 		340,
+  restore-preparation-time = 		341,
+  scale = 				187,
+  scale-factor = 			188,
+  schedule-default = 			174,
+  secured-status = 			235,
+  security-pdu-timeout = 		334,
+  security-time-window = 		335,
+  segmentation-supported = 		107,
+  serial-number = 			372,
+  setpoint = 				108,
+  setpoint-reference = 			109,
+  setting = 				162,
+  shed-duration = 			219,
+  shed-level-descriptions = 		220,
+  shed-levels = 			221,
+  silenced = 				163,
+  slave-address-binding = 		171,
+  slave-proxy-enable = 			172,
+  start-time = 				142,
+  state-description = 			222,
+  state-text = 				110,
+  status-flags = 			111,
+  stop-time = 				143,
+  stop-when-full = 			144,
+  structured-object-list = 		209,
+  subordinate-annotations = 		210,
+  subordinate-list = 			211,
+  subscribed-recipients = 		362,
+  supported-formats = 			304,
+  supported-format-classes = 		305,
+  supported-security-algorithms = 	336,
+  system-status = 			112,
+  threat-authority = 			306,
+  threat-level = 			307,
+  time-delay = 				113,
+  time-delay-normal = 			356,
+  time-of-active-time-reset = 		114,
+  time-of-device-restart = 		203,
+  time-of-state-count-reset = 		115,
+  time-synchronization-interval = 	204,
+  time-synchronization-recipients = 	116,
+  total-record-count = 			145,
+  trace-flag = 				308,
+  tracking-value = 			164,
+  transaction-notification-class = 	309,
+  transition = 				385,
+  trigger = 				205,
+  units = 				117,
+  update-interval = 			118,
+  update-key-set-timeout = 		337,
+  update-time = 			189,
+  user-external-identifier = 		310,
+  user-information-reference = 		311,
+  user-name = 				317,
+  user-type = 				318,
+  uses-remaining = 			319,
+  utc-offset = 				119,
+  utc-time-synchronization-recipients = 206,
+  valid-samples = 			146,
+  value-before-change = 		190,
+  value-set = 				191,
+  value-change-time = 			192,
+  variance-value = 			151,
+  vendor-identifier = 			120,
+  vendor-name = 			121,
+  verification-time = 			326,
+  vt-classes-supported = 		122,
+  weekly-schedule = 			123,
+  window-interval = 			147,
+  window-samples = 			148,
+  write-status = 			370,
+  zone-from = 				320,
+  zone-members = 			165,
+  zone-to = 				321,
+
+# The special property identifiers all, optional, and required are reserved for use in the
+# ReadPropertyMultiple service or services not defined in this standard.
+#
+# Enumerated values 0-511 are reserved for definition by ASHRAE. Enumerated values 512-4194303 may be used by
+# others subject to the procedures and constraints described in Clause 23.
+#
+# Old and removed:
+  
+  issue-confirmed-notifications = 	51,
+  protocol-conformance-class = 		95,
+  recipient = 				101,
+  current-notify-time = 		129,
+  previous-notify-time = 		138,
+  master-exemption = 			284,
+  occupancy-exemption = 		293,
+  passback-exemption = 			299,
+
+  _proprietary_ = 			4194303
+
+};
+
+export type ErrorClass = enum {
+  
+  device = 		0,
+  object_ = 		1,
+  property_ = 		2,
+  resources = 		3,
+  security = 		4,
+  services = 		5,
+  vt = 			6,
+  communication = 	7
+
+};
+
+export type ErrorCode = enum {
+  
+  abort-apdu-too-long = 			123,
+  abort-application-exceeded-reply-time = 	124,
+  abort-buffer-overflow = 			51,
+  abort-insufficient-security = 		135,
+  abort-invalid-apdu-in-this-state = 		52,
+  abort-other = 				56,
+  abort-out-of-resources = 			125,
+  abort-preempted-by-higher-priority-task = 	53,
+  abort-proprietary = 				55,
+  abort-security-error = 			136,
+  abort-segmentation-not-supported = 		54,
+  abort-tsm-timeout = 				126,
+  abort-window-size-out-of-range = 		127,
+  access-denied = 				85,
+  addressing-error = 				115,
+  bad-destination-address = 			86,
+  bad-destination-device-id = 			87,
+  bad-signature = 				88,
+  bad-source-address = 				89,
+  bad-timestamp = 				90,
+  busy = 					82,
+  cannot-use-key = 				91,
+  cannot-verify-message-id = 			92,
+  character-set-not-supported = 		41,
+  communication-disabled = 			83,
+  configuration-in-progress = 			2,
+  correct-key-revision = 			93,
+  cov-subscription-failed = 			43,
+  datatype-not-supported = 			47,
+  delete-fdt-entry-failed = 			120,
+  device-busy = 				3,
+  destination-device-id-required = 		94,
+  distribute-broadcast-failed = 		121,
+  duplicate-message = 				95,
+  duplicate-name = 				48,
+  duplicate-object-id = 			49,
+  dynamic-creation-not-supported = 		4,
+  encryption-not-configured = 			96,
+  encryption-required = 			97,
+  file-access-denied = 				5,
+  file-full = 					128,
+  inconsistent-configuration = 			129,
+  inconsistent-object-type = 			130,
+  inconsistent-parameters = 			7,
+  inconsistent-selection-criterion = 		8,
+  incorrect-key = 				98,
+  internal-error = 				131,
+  invalid-array-index = 			42,
+  invalid-configuration-data = 			46,
+  invalid-data-type = 				9,
+  invalid-event-state = 			73,
+  invalid-file-access-method = 			10,
+  invalid-file-start-position = 		11,
+  invalid-key-data = 				99,
+  invalid-parameter-data-type = 		13,
+  invalid-tag = 				57,
+  invalid-time-stamp = 				14,
+  key-update-in-progress = 			100,
+  list-element-not-found = 			81,
+  log-buffer-full = 				75,
+  logged-value-purged = 			76,
+  malformed-message = 				101,
+  message-too-long = 				113,
+  missing-required-parameter = 			16,
+  network-down = 				58,
+  no-alarm-configured = 			74,
+  no-objects-of-specified-type = 		17,
+  no-property-specified = 			77,
+  no-space-for-object = 			18,
+  no-space-to-add-list-element = 		19,
+  no-space-to-write-property = 			20,
+  no-vt-sessions-available = 			21,
+  not-configured = 				132,
+  not-configured-for-triggered-logging = 	78,
+  not-cov-property = 				44,
+  not-key-server = 				102,
+  not-router-to-dnet = 				110,
+  object-deletion-not-permitted = 		23,
+  object-identifier-already-exists = 		24,
+  other = 					0,
+  operational-problem = 			25,
+  optional-functionality-not-supported = 	45,
+  out-of-memory = 				133,
+  parameter-out-of-range = 			80,
+  password-failure = 				26,
+  property-is-not-a-list = 			22,
+  property-is-not-an-array = 			50,
+  read-access-denied = 				27,
+  read-bdt-failed = 				117,
+  read-fdt-failed = 				119,
+  register-foreign-device-failed = 		118,
+  reject-buffer-overflow = 			59,
+  reject-inconsistent-parameters = 		60,
+  reject-invalid-parameter-data-type = 		61,
+  reject-invalid-tag = 				62,
+  reject-missing-required-parameter = 		63,
+  reject-parameter-out-of-range = 		64,
+  reject-too-many-arguments = 			65,
+  reject-undefined-enumeration = 		66,
+  reject-unrecognized-service = 		67,
+  reject-proprietary = 				68,
+  reject-other = 				69,
+  router-busy = 				111,
+  security-error = 				114,
+  security-not-configured = 			103,
+  service-request-denied = 			29,
+  source-security-required = 			104,
+  success = 					84,
+  timeout = 					30,
+  too-many-keys = 				105,
+  unknown-authentication-type = 		106,
+  unknown-device = 				70,
+  unknown-file-size = 				122,
+  unknown-key = 				107,
+  unknown-key-revision = 			108,
+  unknown-network-message = 			112,
+  unknown-object = 				31,
+  unknown-property = 				32,
+  unknown-subscription = 			79,
+  unknown-route = 				71,
+  unknown-source-message = 			109,
+  unknown-vt-class = 				34,
+  unknown-vt-session = 				35,
+  unsupported-object-type = 			36,
+  value-not-initialized = 			72,
+  value-out-of-range = 				37,
+  value-too-long = 				134,
+  vt-session-already-closed = 			38,
+  vt-session-termination-failure = 		39,
+  write-access-denied = 			40,
+  write-bdt-failed = 				116
+
+};
+
+###################################################
+
+export type BACnetRejectReason = enum {
+  other = 0,
+  buffer-overflow = 1,
+  inconsistent-parameters = 2,
+  invalid-parameter-data-type = 3,
+  invalid-tag = 4,
+  missing-required-parameter = 5,
+  parameter-out-of-range = 6,
+  too-many-arguments = 7,
+  undefined-enumeration = 8,
+  unrecognized-service = 9
+};
+
+export type BACnetAbortReason = enum {
+  other = 0,
+  buffer-overflow = 1,
+  invalid-apdu-in-this-state = 2,
+  preempted-by-higher-priority-task = 3,
+  segmentation-not-supported = 4,
+  security-error = 5,
+  insufficient-security = 6,
+  window-size-out-of-range = 7,
+  application-exceeded-reply-time = 8,
+  out-of-resources = 9,
+  tsm-timeout = 10,
+  apdu-too-long = 11
+};
+
+#type BACnetDateTime = unit {
+#  date: BACnetMessage;
+#  btime: BACnetMessage;
+#};
+
+#type BACnetTimeStamp = unit {
+#  # choice
+#  tag: BACnetTag;
+#
+#  btime: BACnetTime("","") if ( self.tag.tag == 0 );
+#  sequenceNumber: bytes &length=self.tag.lvt &convert=$$.to_uint(BinPAC::ByteOrder::Network) if ( self.tag.tag == 1);
+#  dateTime: BACnetDateTime if ( self.tag.tag == 2 );
+#
+# : BACnetTag if ( self.tag.lvt == 6 );
+#};
+
